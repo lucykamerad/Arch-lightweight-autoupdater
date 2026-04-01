@@ -1,13 +1,24 @@
 # Arch-lightweight-autoupdater
-A lightweight arch autoupdater 
-I got bored of manually updating the sistem, so i created this small app to update the sistem at lauch ( you will need to make it start at lauch ((or keep it in the desktop at lauch it manually)) depending on ur arch distro and Environment
-the app is supposed to be lightweight and small so it wont occupy more than it needs, you need to extract the app ( check the source code if you feel like it, its not a good code ik its something i trew out and onestly its ok for what its supposed to do ) 
 
-(you an check everything about the app before running it if you feel like it)
+A lightweight, modern system updater for **Arch Linux**.
 
-You can use this app and even modify it at your will, if you republish this app pleas at least give me some credit, its always accepted, ( or u cant, its not obbligatory )
-I hope you will find this app interesting and onestly useful 
+## Features
+- **Modern UI**: Clean, dark-themed interface built with standard Tkinter (no bloat).
+- **Security-First**: No more stored passwords. Uses `pkexec` (PolicyKit) for secure, standard privilege escalation.
+- **AUR Support**: Automatically detects and uses `yay` or `paru` if available.
+- **Arch Verification**: Safety check to ensure it only runs on Arch Linux systems.
+- **Lightweight**: Zero external dependencies beyond standard Python libraries and Polkit.
 
-Have fun! :3
+## Usage
+1. Ensure `polkit` is installed (it usually is on most DEs).
+2. Launch the app manually or add it to your startup applications.
+3. Click "Check & Update" to begin.
 
--Lucia Ushka <3
+## Security
+This app uses `pkexec` to run `pacman` with root privileges. This means you will be prompted by your system's standard authentication agent (e.g., GNOME Polkit, KDE Polkit), ensuring your password is never stored or handled by this script.
+
+## License
+Provided under the [MIT License](LICENSE).
+
+---
+- **Author**: Lucia Ushka <3

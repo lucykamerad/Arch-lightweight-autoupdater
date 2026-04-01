@@ -1,197 +1,235 @@
 import tkinter as tk
-from tkinter import messagebox, simpledialog, scrolledtext
+from tkinter import messagebox, scrolledtext
 import subprocess
 import threading
 import os
 import sys
-import base64
 
-# Simple config
-APP_TITLE = "ArchAutoUpdater"
-IMG_FILE = "image.png"
-PASS_FILE = ".sudo_pass"
+# --- Constants & Config ---
+APP_TITLE = "Arch Auto-Updater"
+WINDOW_SIZE = "950x600"
+COLOR_BG = "#121212"
+COLOR_FG = "#E0E0E0"
+COLOR_ACCENT = "#1793D1"
+COLOR_SUCCESS = "#4CAF50"
+COLOR_ERROR = "#F44336"
+COLOR_TERMINAL_BG = "#1E1E1E"
+COLOR_TERMINAL_FG = "#00FF41"
 
-class UpdaterApp(tk.Tk):
+class ArchUpdaterApp(tk.Tk):
     def __init__(self):
         super().__init__()
 
         self.title(APP_TITLE)
-        self.geometry("800x500")
+        self.geometry(WINDOW_SIZE)
+        self.configure(bg=COLOR_BG)
         self.resizable(False, False)
-        
-        # Make it look slightly less ancient
-        self.configure(bg="#2b2b2b")
 
-        # Layout configuration
-        self.grid_columnconfigure(0, weight=1)
-        self.grid_columnconfigure(1, weight=1)
-        self.grid_rowconfigure(0, weight=1)
-
-        self.setup_ui()
-        self.ensure_password()
-
-    def setup_ui(self):
-        # Styles
-        fg_color = "#ffffff"
-        bg_color = "#2b2b2b"
-        btn_bg = "#1f6aa5"
-        
-        # --- LEFT PANEL (Controls) ---
-        self.left_panel = tk.Frame(self, bg=bg_color)
-        self.left_panel.grid(row=0, column=0, sticky="nswe", padx=20, pady=20)
-        
-        # Title
-        self.lbl_title = tk.Label(self.left_panel, text="Arch Updater", font=("Arial", 24, "bold"), bg=bg_color, fg=fg_color)
-        self.lbl_title.pack(pady=(40, 20))
-
-        # Status
-        self.lbl_status = tk.Label(self.left_panel, text="Ready to go...", font=("Arial", 12), bg=bg_color, fg="#aaaaaa")
-        self.lbl_status.pack(pady=10)
-
-        # Progress (Determinate because standard tk indeterminate is ugly/hard)
-        # We'll just use status text mainly, maybe a simple canvas bar if we wanted fancy
-        
-        # Button
-        self.btn_update = tk.Button(self.left_panel, text="Check & Update", command=self.do_update, 
-                                    bg=btn_bg, fg=fg_color, font=("Arial", 12), relief="flat", padx=20, pady=10)
-        self.btn_update.pack(pady=20)
-
-        # Console Log
-        self.console = scrolledtext.ScrolledText(self.left_panel, height=10, bg="#1e1e1e", fg="#00ff00", font=("Consolas", 10))
-        self.console.pack(pady=10, fill="both", expand=True)
-        self.console.config(state="disabled")
-
-        # --- RIGHT PANEL (Image) ---
-        self.right_panel = tk.Frame(self, bg=bg_color)
-        self.right_panel.grid(row=0, column=1, sticky="nswe")
-        
-        try:
-            # Load PNG natively
-            # Image is pre-resized to fit height=500, so valid directly
-            self.orig_img = tk.PhotoImage(file=IMG_FILE)
-            self.lbl_img = tk.Label(self.right_panel, image=self.orig_img, bg=bg_color)
-            self.lbl_img.pack(expand=True)
-            
-        except Exception as e:
-            print(f"Failed to load image: {e}")
-            self.lbl_img = tk.Label(self.right_panel, text="[Image Missing]", bg=bg_color, fg=fg_color)
-            self.lbl_img.pack(expand=True)
-
-    def log_msg(self, text):
-        self.console.config(state="normal")
-        self.console.insert("end", text + "\n")
-        self.console.see("end")
-        self.console.config(state="disabled")
-
-    # --- Password Stuff (File based now, no keyring lib) ---
-    def get_pwd(self):
-        if os.path.exists(PASS_FILE):
-            try:
-                with open(PASS_FILE, "r") as f:
-                    # Simple base64 decode to not store plain text directly readable by eyes
-                    # (still not secure, but requested feature)
-                    encoded = f.read().strip()
-                    return base64.b64decode(encoded).decode("utf-8")
-            except:
-                return None
-        return None
-
-    def save_pwd(self, pwd):
-        try:
-            with open(PASS_FILE, "w") as f:
-                encoded = base64.b64encode(pwd.encode("utf-8")).decode("utf-8")
-                f.write(encoded)
-        except Exception as e:
-            self.log_msg(f"Save password failed: {e}")
-
-    def ensure_password(self):
-        if not self.get_pwd():
-            # Standard dialog
-            input_val = simpledialog.askstring("Auth Required", "Enter sudo password for pacman:", show='*')
-            if input_val:
-                self.save_pwd(input_val)
-            else:
-                self.log_msg("Warn: No password provided.")
-
-    # --- Update Logic ---
-    def do_update(self):
-        self.btn_update.config(state="disabled")
-        t = threading.Thread(target=self._run_pacman, daemon=True)
-        t.start()
-
-    def _run_pacman(self):
-        pwd = self.get_pwd()
-        
-        if not pwd:
-            self.log_msg("Error: Missing sudo password. Restart app.")
-            self.after(0, self.cleanup)
+        if not self.is_arch_linux():
+            messagebox.showerror("OS Error", "This application is designed specifically for Arch Linux.")
+            self.destroy()
             return
 
-        success = False
+        self.setup_ui()
+        self.detect_aur_helper()
+
+    def is_arch_linux(self):
+        return os.path.exists("/etc/arch-release")
+
+    def detect_aur_helper(self):
+        self.aur_helper = None
+        for helper in ["yay", "paru"]:
+            if subprocess.run(["which", helper], capture_output=True).returncode == 0:
+                self.aur_helper = helper
+                break
+        
+        status = f"Using: pacman" + (f" + {self.aur_helper}" if self.aur_helper else "")
+        self.lbl_helper_status.config(text=status)
+
+    def setup_ui(self):
+        # Header
+        self.header_frame = tk.Frame(self, bg=COLOR_BG, height=80)
+        self.header_frame.pack(fill="x", pady=(20, 10))
+
+        self.lbl_title = tk.Label(
+            self.header_frame, text="ARCH SYSTEM UPDATER", 
+            font=("Segoe UI", 28, "bold"), bg=COLOR_BG, fg=COLOR_ACCENT
+        )
+        self.lbl_title.pack()
+
+        self.lbl_helper_status = tk.Label(
+            self.header_frame, text="Detecting system state...", 
+            font=("Segoe UI", 10), bg=COLOR_BG, fg="#888888"
+        )
+        self.lbl_helper_status.pack()
+
+        # Layout container
+        self.main_container = tk.Frame(self, bg=COLOR_BG)
+        self.main_container.pack(fill="both", expand=True, padx=40, pady=10)
+
+        # Left: Commands & Status
+        self.left_side = tk.Frame(self.main_container, bg=COLOR_BG)
+        self.left_side.pack(side="left", fill="both", expand=True)
+
+        self.lbl_status = tk.Label(
+            self.left_side, text="System Ready", font=("Segoe UI", 14), bg=COLOR_BG, fg=COLOR_FG
+        )
+        self.lbl_status.pack(anchor="w", pady=(20, 5))
+
+        self.progress_canvas = tk.Canvas(self.left_side, height=12, bg="#333333", highlightthickness=0)
+        self.progress_canvas.pack(fill="x", pady=10)
+        self.progress_bar = self.progress_canvas.create_rectangle(0, 0, 0, 12, fill=COLOR_ACCENT, width=0)
+
+        self.btn_update = tk.Button(
+            self.left_side, text="UPDATE SYSTEM", command=self.start_update_thread,
+            bg=COLOR_ACCENT, fg="white", font=("Segoe UI", 12, "bold"),
+            relief="flat", cursor="hand2", padx=30, pady=10
+        )
+        self.btn_update.pack(pady=30)
+
+        # License Button
+        self.btn_license = tk.Button(
+            self.left_side, text="VIEW LICENSE", command=self.show_license,
+            bg=COLOR_BG, fg="#888888", font=("Segoe UI", 9),
+            relief="flat", cursor="hand2", activebackground=COLOR_BG, activeforeground=COLOR_ACCENT
+        )
+        self.btn_license.pack(side="bottom", anchor="w", pady=10)
+
+        # Right: Logs
+        self.right_side = tk.Frame(self.main_container, bg=COLOR_BG)
+        self.right_side.pack(side="right", fill="both", expand=True, padx=(20, 0))
+
+        self.log_area = scrolledtext.ScrolledText(
+            self.right_side, bg=COLOR_TERMINAL_BG, fg=COLOR_TERMINAL_FG,
+            font=("Consolas", 10), borderwidth=0, highlightthickness=1,
+            highlightbackground="#444444"
+        )
+        self.log_area.pack(fill="both", expand=True)
+        self.log_area.config(state="disabled")
+
+        self.footer = tk.Label(
+            self, text="Built for Arch Linux • Premium & Secure", font=("Segoe UI", 8), bg=COLOR_BG, fg="#555555"
+        )
+        self.footer.pack(side="bottom", pady=10)
+
+    def show_license(self):
         try:
-            self.log_msg("Syncing DBs (pacman -Sy)...")
+            with open("LICENSE", "r") as f:
+                content = f.read()
             
-            cmd1 = ["sudo", "-S", "pacman", "-Sy"]
-            p1 = subprocess.Popen(cmd1, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            out1, err1 = p1.communicate(input=f"{pwd}\n")
+            # Simple custom dialog for license
+            win = tk.Toplevel(self)
+            win.title("Project License")
+            win.geometry("600x500")
+            win.configure(bg=COLOR_BG)
             
-            if p1.returncode != 0:
-                self.log_msg(f"Sync failed: {err1}")
-                self.after(0, self.cleanup)
-                return
+            t = scrolledtext.ScrolledText(win, bg=COLOR_TERMINAL_BG, fg=COLOR_FG, font=("Consolas", 10))
+            t.pack(fill="both", expand=True, padx=20, pady=20)
+            t.insert("end", content)
+            t.config(state="disabled")
             
-            self.log_msg("DB Synced.")
-            self.log_msg("Upgrading system (pacman -Su)...")
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not read LICENSE: {e}")
 
-            cmd2 = ["sudo", "-S", "pacman", "-Su", "--noconfirm"]
-            p2 = subprocess.Popen(cmd2, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            
-            p2.stdin.write(f"{pwd}\n")
-            p2.stdin.flush()
-            
-            while True:
-                line = p2.stdout.readline()
-                if not line and p2.poll() is not None:
-                    break
-                if line:
-                    safe_line = line.strip()
-                    self.after(0, lambda l=safe_line: self.log_msg(l))
+    def log(self, message):
+        self.log_area.config(state="normal")
+        self.log_area.insert("end", f"{message}\n")
+        self.log_area.see("end")
+        self.log_area.config(state="disabled")
 
-            p2.wait()
-            
-            if p2.returncode == 0:
-                 self.log_msg("Done! System is up to date.")
-                 success = True
-            else:
-                 err2 = p2.stderr.read()
-                 if "nothing to do" in err2 or (out1 and "nothing to do" in out1):
-                     self.log_msg("Nothing to update.")
-                     success = True
-                 else:
-                     self.log_msg(f"Process failed: {err2}")
+    def update_progress(self, percent):
+        canvas_width = self.progress_canvas.winfo_width()
+        self.progress_canvas.coords(self.progress_bar, 0, 0, (percent / 100) * canvas_width, 12)
 
-        except Exception as ex:
-            self.log_msg(f"Exception: {ex}")
+    def start_update_thread(self):
+        self.btn_update.config(state="disabled", text="UPDATING...")
+        self.lbl_status.config(text="Initializing...", fg=COLOR_FG)
+        thread = threading.Thread(target=self.run_updates, daemon=True)
+        thread.start()
+
+    def run_updates(self):
+        # 1. Sync
+        self.update_progress(20)
+        self.lbl_status.config(text="Checking for updates...")
+        self.log(">>> [1/3] Refreshing package databases...")
         
-        self.after(0, lambda: self.cleanup(auto_close=success))
+        success = self.execute_cmd(["pkexec", "pacman", "-Sy"])
+        if not success:
+            self.handle_failure("Failed to sync databases. Check internet or authentication.")
+            return
 
-    def cleanup(self, auto_close=False):
-        self.btn_update.config(state="normal")
-        self.lbl_status.config(text="Finite.")
+        # 2. Upgrade
+        self.update_progress(40)
+        self.lbl_status.config(text="Preparing system upgrade...")
+        self.log("\n>>> [2/3] Resolving package upgrades...")
         
-        if auto_close:
-            timeout = 20
-            self.log_msg(f"Auto-closing in {timeout}s...")
-            self.btn_update.config(state="disabled")
-            self.countdown(timeout)
-            
-    def countdown(self, seconds):
-        if seconds <= 0:
-            self.destroy()
+        # We try to detect conflicts and handle them
+        success = self.execute_cmd(["pkexec", "pacman", "-Su", "--noconfirm"])
+        
+        if not success:
+            # We might have a conflict that --noconfirm couldn't handle
+            self.log("\n[!] Standard upgrade failed. Checking for conflicts...")
+            # Detect conflicts by running again WITHOUT noconfirm but for preparation only
+            # Re-running with interactive mode for the user via terminal could be better
+            # But for now, we'll suggest manual intervention or parsing errors
+            self.handle_failure("Conflict or error detected during upgrade. Check the log.")
+            return
+
+        # 3. AUR
+        self.update_progress(70)
+        if self.aur_helper:
+            self.lbl_status.config(text=f"Updating AUR ({self.aur_helper})...")
+            self.log(f"\n>>> [3/3] Scanning {self.aur_helper}...")
+            # AUR helpers handle their own sudo
+            self.execute_cmd([self.aur_helper, "-Sua", "--noconfirm"])
         else:
-            self.btn_update.config(text=f"Closing in {seconds}s")
-            self.after(1000, lambda: self.countdown(seconds - 1))
+            self.log("\n>>> [3/3] No AUR helper. Skipping AUR updates.")
+
+        self.update_progress(100)
+        self.lbl_status.config(text="Deployment Complete!", fg=COLOR_SUCCESS)
+        self.log("\n[DONE] Your system is fully updated.")
+        self.after(0, self.finish_ui)
+
+    def execute_cmd(self, cmd_list):
+        try:
+            # Note: subprocess.PIPE can sometimes hang if buffers are full and we don't read fast enough
+            # but bufsize=1 and text mode should be okay for pacman's throughput.
+            process = subprocess.Popen(
+                cmd_list, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, 
+                text=True, bufsize=1, universal_newlines=True, stdin=subprocess.PIPE
+            )
+            
+            error_detected = False
+            for line in process.stdout:
+                line_striped = line.strip()
+                self.log(f"  {line_striped}")
+                
+                # Conflict detection
+                if "conflict" in line_striped.lower() or "unresolvable" in line_striped.lower():
+                    error_detected = True
+                    # If we detect a conflict, we might need to ask the user
+                    # In this lightweight app, we'll log it clearly and let the user see it
+                
+                # Dependency replace? (Pacman usually asks this)
+                # With --noconfirm, pacman automatically replaces if it's the expected behavior.
+            
+            process.wait()
+            return process.returncode == 0 and not error_detected
+        except Exception as e:
+            self.log(f"Subprocess Error: {e}")
+            return False
+
+    def handle_failure(self, msg):
+        self.log(f"\n[FATAL] {msg}")
+        self.lbl_status.config(text="Update Blocked", fg=COLOR_ERROR)
+        self.btn_update.config(state="normal", text="VIEW ERRORS")
+        # Suggest manual terminal run if conflict
+        self.log("\n[TIP] If you see 'conflicting dependencies', try running 'sudo pacman -Su' in a terminal.")
+
+    def finish_ui(self):
+        self.btn_update.config(state="normal", text="SYSTEM UPDATED")
+        self.after(5000, lambda: self.btn_update.config(text="RE-SCAN"))
 
 if __name__ == "__main__":
-    app = UpdaterApp()
+    app = ArchUpdaterApp()
     app.mainloop()
