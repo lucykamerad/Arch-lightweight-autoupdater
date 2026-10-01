@@ -1,9 +1,10 @@
 import tkinter as tk
 from tkinter import messagebox, scrolledtext
+import os
+import queue
+import shutil
 import subprocess
 import threading
-import os
-import sys
 
 # --- Constants & Config ---
 APP_TITLE = "Arch Auto-Updater"
@@ -30,8 +31,10 @@ class ArchUpdaterApp(tk.Tk):
             self.destroy()
             return
 
+        self.ui_queue = queue.Queue()
         self.setup_ui()
         self.detect_aur_helper()
+        self.after(100, self.drain_ui_queue)
 
     def is_arch_linux(self):
         return os.path.exists("/etc/arch-release")
@@ -39,7 +42,7 @@ class ArchUpdaterApp(tk.Tk):
     def detect_aur_helper(self):
         self.aur_helper = None
         for helper in ["yay", "paru"]:
-            if subprocess.run(["which", helper], capture_output=True).returncode == 0:
+            if shutil.which(helper):
                 self.aur_helper = helper
                 break
         
@@ -131,13 +134,37 @@ class ArchUpdaterApp(tk.Tk):
         except Exception as e:
             messagebox.showerror("Error", f"Could not read LICENSE: {e}")
 
+    # Tkinter widgets must only be touched from the main thread. The update
+    # runs in a worker thread, so it queues UI changes and the main thread
+    # applies them from drain_ui_queue().
+    def run_in_ui(self, func, *args, **kwargs):
+        self.ui_queue.put((func, args, kwargs))
+
+    def drain_ui_queue(self):
+        try:
+            while True:
+                func, args, kwargs = self.ui_queue.get_nowait()
+                func(*args, **kwargs)
+        except queue.Empty:
+            pass
+        self.after(100, self.drain_ui_queue)
+
     def log(self, message):
+        self.run_in_ui(self._log, message)
+
+    def _log(self, message):
         self.log_area.config(state="normal")
         self.log_area.insert("end", f"{message}\n")
         self.log_area.see("end")
         self.log_area.config(state="disabled")
 
+    def set_status(self, text, fg=COLOR_FG):
+        self.run_in_ui(self.lbl_status.config, text=text, fg=fg)
+
     def update_progress(self, percent):
+        self.run_in_ui(self._update_progress, percent)
+
+    def _update_progress(self, percent):
         canvas_width = self.progress_canvas.winfo_width()
         self.progress_canvas.coords(self.progress_bar, 0, 0, (percent / 100) * canvas_width, 12)
 
@@ -148,23 +175,16 @@ class ArchUpdaterApp(tk.Tk):
         thread.start()
 
     def run_updates(self):
-        # 1. Sync
+        # 1. System packages
         self.update_progress(20)
-        self.lbl_status.config(text="Checking for updates...")
-        self.log(">>> [1/3] Refreshing package databases...")
-        
-        success = self.execute_cmd(["pkexec", "pacman", "-Sy"])
-        if not success:
-            self.handle_failure("Failed to sync databases. Check internet or authentication.")
-            return
+        self.set_status("Checking for updates...")
+        self.log(">>> [1/2] Syncing databases and upgrading packages...")
 
-        # 2. Upgrade
+        # Sync and upgrade in one transaction (-Syu). Refreshing the databases
+        # on their own would leave the system in an unsupported partial state
+        # if the upgrade then failed.
         self.update_progress(40)
-        self.lbl_status.config(text="Preparing system upgrade...")
-        self.log("\n>>> [2/3] Resolving package upgrades...")
-        
-        # We try to detect conflicts and handle them
-        success = self.execute_cmd(["pkexec", "pacman", "-Su", "--noconfirm"])
+        success = self.execute_cmd(["pkexec", "pacman", "-Syu", "--noconfirm"])
         
         if not success:
             # We might have a conflict that --noconfirm couldn't handle
@@ -175,20 +195,20 @@ class ArchUpdaterApp(tk.Tk):
             self.handle_failure("Conflict or error detected during upgrade. Check the log.")
             return
 
-        # 3. AUR
+        # 2. AUR
         self.update_progress(70)
         if self.aur_helper:
-            self.lbl_status.config(text=f"Updating AUR ({self.aur_helper})...")
-            self.log(f"\n>>> [3/3] Scanning {self.aur_helper}...")
+            self.set_status(f"Updating AUR ({self.aur_helper})...")
+            self.log(f"\n>>> [2/2] Scanning {self.aur_helper}...")
             # AUR helpers handle their own sudo
             self.execute_cmd([self.aur_helper, "-Sua", "--noconfirm"])
         else:
-            self.log("\n>>> [3/3] No AUR helper. Skipping AUR updates.")
+            self.log("\n>>> [2/2] No AUR helper. Skipping AUR updates.")
 
         self.update_progress(100)
-        self.lbl_status.config(text="Deployment Complete!", fg=COLOR_SUCCESS)
+        self.set_status("Deployment Complete!", COLOR_SUCCESS)
         self.log("\n[DONE] Your system is fully updated.")
-        self.after(0, self.finish_ui)
+        self.run_in_ui(self.finish_ui)
 
     def execute_cmd(self, cmd_list):
         try:
@@ -221,8 +241,8 @@ class ArchUpdaterApp(tk.Tk):
 
     def handle_failure(self, msg):
         self.log(f"\n[FATAL] {msg}")
-        self.lbl_status.config(text="Update Blocked", fg=COLOR_ERROR)
-        self.btn_update.config(state="normal", text="VIEW ERRORS")
+        self.set_status("Update Blocked", COLOR_ERROR)
+        self.run_in_ui(self.btn_update.config, state="normal", text="VIEW ERRORS")
         # Suggest manual terminal run if conflict
         self.log("\n[TIP] If you see 'conflicting dependencies', try running 'sudo pacman -Su' in a terminal.")
 
