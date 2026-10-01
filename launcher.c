@@ -19,14 +19,13 @@ int main() {
             return 1;
         }
 
-        // Construct command to run the script
-        char command[PATH_MAX + 50];
-        snprintf(command, sizeof(command), "\"%s/run_updater.sh\"", dir);
-        
-        // Use system() to run the script
-        // We use the absolute path we found just to be safe
-        int ret = system(command);
-        return WEXITSTATUS(ret);
+        // Run the script directly (no shell) so that unusual characters in the
+        // install path cannot be interpreted as shell syntax
+        char script[PATH_MAX + 20];
+        snprintf(script, sizeof(script), "%s/run_updater.sh", dir);
+        execl(script, script, (char *)NULL);
+        perror("exec failed");
+        return 1;
     } else {
         perror("readlink failed");
         return 1;
