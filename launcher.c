@@ -23,7 +23,7 @@ int main() {
         // install path cannot be interpreted as shell syntax
         char script[PATH_MAX + 20];
         snprintf(script, sizeof(script), "%s/run_updater.sh", dir);
-        execl(script, script, (char *)NULL);
+        execl("/bin/bash", "bash", script, (char *)NULL);
         perror("exec failed");
         return 1;
     } else {
